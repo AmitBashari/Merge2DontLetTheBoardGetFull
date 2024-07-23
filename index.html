@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Merge 2 - Full Board Variant</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+        }
+        #gameCanvas {
+            border: 2px solid #333;
+            touch-action: none; /* Prevents default touch actions like scrolling */
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <script>
+        const GRID_SIZE = { width: 7, height: 5 };
+        const CELL_SIZE = 80;
+        const COLORS = {
+            'triangle': '#FF0000',
+            'circle': '#0000FF',
+            'square': '#00FF00',
+            'rhombus': '#FFFF00',
+            'rectangle': '#800080'
+        };
+
+        const SPAWN_INTERVAL = 500; // Change this value to adjust spawn frequency (e.g., 2000 for 2 seconds)
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        class Item {
+            constructor(type, level = 1) {
+                this.type = type;
+                this.level = level;
+            }
+
+            draw(x, y) {
+                ctx.fillStyle = COLORS[this.type];
+                ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+                ctx.fillStyle = '#000';
+                ctx.font = '24px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.level, x + CELL_SIZE / 2, y + CELL_SIZE / 2);
+            }
+        }
+
+        class Game {
+            constructor() {
+                this.board = Array(GRID_SIZE.height).fill().map(() => Array(GRID_SIZE.width).fill(null));
+                this.score = 0;
+                this.gameOver = false;
+                this.selectedItem = null;
+                this.spawningStarted = false;
+                this.spawnTimer = 0;
+                this.lastTime = 0;
+
+                this.initializeBoard();
+
+                // Add touch event listeners
+                canvas.addEventListener('touchstart', this.handleTouchStart.bind(this));
+                canvas.addEventListener('touchmove', this.handleTouchMove.bind(this));
+                canvas.addEventListener('touchend', this.handleTouchEnd.bind(this));
+
+                // Modify existing mouse event listeners
+                canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
+                canvas.addEventListener('mousemove', this.handleMouseMove.bind(this));
+                canvas.addEventListener('mouseup', this.handleMouseUp.bind(this));
+            }
+
+            initializeBoard() {
+                const initialItems = Math.floor(GRID_SIZE.width * GRID_SIZE.height / 3);
+                for (let i = 0; i < initialItems; i++) {
+                    this.spawnNewItem();
+                }
+            }
+
+            spawnNewItem() {
+                const emptyCells = this.getEmptyCells();
+                if (emptyCells.length > 0) {
+                    const [row, col] = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+                    const type = Object.keys(COLORS)[Math.floor(Math.random() * Object.keys(COLORS).length)];
+                    this.board[row][col] = new Item(type);
+                }
+            }
+
+            getEmptyCells() {
+                const emptyCells = [];
+                for (let row = 0; row < GRID_SIZE.height; row++) {
+                    for (let col = 0; col < GRID_SIZE.width; col++) {
+                        if (this.board[row][col] === null) {
+                            emptyCells.push([row, col]);
+                        }
+                    }
+                }
+                return emptyCells;
+            }
+
+            handleMouseDown(event) {
+                this.handlePointerDown(event.clientX, event.clientY);
+            }
+
+            handleMouseMove(event) {
+                this.handlePointerMove(event.clientX, event.clientY);
+            }
+
+            handleMouseUp(event) {
+                this.handlePointerUp(event.clientX, event.clientY);
+            }
+
+            handleTouchStart(event) {
+                event.preventDefault(); // Prevent default touch actions
+                const touch = event.touches[0];
+                this.handlePointerDown(touch.clientX, touch.clientY);
+            }
+
+            handleTouchMove(event) {
+                event.preventDefault();
+                const touch = event.touches[0];
+                this.handlePointerMove(touch.clientX, touch.clientY);
+            }
+
+            handleTouchEnd(event) {
+                event.preventDefault();
+                const touch = event.changedTouches[0];
+                this.handlePointerUp(touch.clientX, touch.clientY);
+            }
+
+            handlePointerDown(clientX, clientY) {
+                if (this.gameOver) {
+                    this.reset();
+                    return;
+                }
+
+                const [col, row] = this.getGridPos(clientX, clientY);
+                this.startDrag(row, col);
+            }
+
+            handlePointerMove(clientX, clientY) {
+                if (this.selectedItem) {
+                    const rect = canvas.getBoundingClientRect();
+                    this.selectedItemPos = {
+                        x: clientX - rect.left,
+                        y: clientY - rect.top
+                    };
+                }
+            }
+
+            handlePointerUp(clientX, clientY) {
+                if (this.selectedItem) {
+                    const [col, row] = this.getGridPos(clientX, clientY);
+                    this.endDrag(row, col);
+                }
+            }
+
+            startDrag(row, col) {
+                if (row >= 0 && row < GRID_SIZE.height && col >= 0 && col < GRID_SIZE.width) {
+                    this.selectedItem = this.board[row][col];
+                    if (this.selectedItem) {
+                        this.originalPos = { row, col };
+                        this.board[row][col] = null;
+                    }
+                }
+            }
+
+            endDrag(row, col) {
+                if (row >= 0 && row < GRID_SIZE.height && col >= 0 && col < GRID_SIZE.width) {
+                    const targetItem = this.board[row][col];
+                    if (targetItem) {
+                        if (this.canMerge(this.selectedItem, targetItem)) {
+                            this.mergeItems(this.originalPos, { row, col });
+                        } else {
+                            this.resetItemPosition();
+                        }
+                    } else {
+                        this.moveItem(this.originalPos, { row, col });
+                    }
+                } else {
+                    this.resetItemPosition();
+                }
+                this.selectedItem = null;
+                this.selectedItemPos = null;
+            }
+
+            getGridPos(clientX, clientY) {
+                const rect = canvas.getBoundingClientRect();
+                const x = clientX - rect.left;
+                const y = clientY - rect.top;
+                const col = Math.floor((x - (canvas.width - GRID_SIZE.width * CELL_SIZE) / 2) / CELL_SIZE);
+                const row = Math.floor((y - (canvas.height - GRID_SIZE.height * CELL_SIZE) / 2) / CELL_SIZE);
+                return [col, row];
+            }
+
+            canMerge(item1, item2) {
+                return item1.type === item2.type && item1.level === item2.level && item1.level < 4;
+            }
+
+            mergeItems(pos1, pos2) {
+                const newLevel = this.selectedItem.level + 1;
+                this.board[pos2.row][pos2.col] = new Item(this.selectedItem.type, newLevel);
+                this.updateScore(newLevel);
+                if (!this.spawningStarted) {
+                    this.spawningStarted = true;
+                }
+            }
+
+            moveItem(from, to) {
+                this.board[to.row][to.col] = this.selectedItem;
+            }
+
+            resetItemPosition() {
+                this.board[this.originalPos.row][this.originalPos.col] = this.selectedItem;
+            }
+
+            updateScore(level) {
+                if (level === 2) this.score += 1;
+                else if (level === 3) this.score += 3;
+                else if (level === 4) this.score += 7;
+            }
+
+            update(deltaTime) {
+                if (!this.gameOver) {
+                    if (this.spawningStarted) {
+                        this.spawnTimer += deltaTime;
+                        if (this.spawnTimer >= SPAWN_INTERVAL) {
+                            this.spawnNewItem();
+                            this.spawnTimer = 0;
+                        }
+                    }
+
+                    if (this.getEmptyCells().length === 0) {
+                        this.gameOver = true;
+                    }
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                this.drawGrid();
+                this.drawItems();
+                this.drawUI();
+
+                if (this.selectedItem && this.selectedItemPos) {
+                    this.selectedItem.draw(this.selectedItemPos.x - CELL_SIZE / 2, this.selectedItemPos.y - CELL_SIZE / 2);
+                }
+
+                if (this.gameOver) {
+                    this.drawGameOver();
+                }
+            }
+
+            drawGrid() {
+                ctx.strokeStyle = '#CCCCCC';
+                for (let row = 0; row <= GRID_SIZE.height; row++) {
+                    ctx.beginPath();
+                    ctx.moveTo((canvas.width - GRID_SIZE.width * CELL_SIZE) / 2, (canvas.height - GRID_SIZE.height * CELL_SIZE) / 2 + row * CELL_SIZE);
+                    ctx.lineTo((canvas.width + GRID_SIZE.width * CELL_SIZE) / 2, (canvas.height - GRID_SIZE.height * CELL_SIZE) / 2 + row * CELL_SIZE);
+                    ctx.stroke();
+                }
+                for (let col = 0; col <= GRID_SIZE.width; col++) {
+                    ctx.beginPath();
+                    ctx.moveTo((canvas.width - GRID_SIZE.width * CELL_SIZE) / 2 + col * CELL_SIZE, (canvas.height - GRID_SIZE.height * CELL_SIZE) / 2);
+                    ctx.lineTo((canvas.width - GRID_SIZE.width * CELL_SIZE) / 2 + col * CELL_SIZE, (canvas.height + GRID_SIZE.height * CELL_SIZE) / 2);
+                    ctx.stroke();
+                }
+            }
+
+            drawItems() {
+                for (let row = 0; row < GRID_SIZE.height; row++) {
+                    for (let col = 0; col < GRID_SIZE.width; col++) {
+                        const item = this.board[row][col];
+                        if (item && item !== this.selectedItem) {
+                            const x = (canvas.width - GRID_SIZE.width * CELL_SIZE) / 2 + col * CELL_SIZE;
+                            const y = (canvas.height - GRID_SIZE.height * CELL_SIZE) / 2 + row * CELL_SIZE;
+                            item.draw(x, y);
+                        }
+                    }
+                }
+            }
+
+            drawUI() {
+                ctx.fillStyle = '#000';
+                ctx.font = '24px Arial';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                ctx.fillText(`Score: ${this.score}`, 10, 10);
+
+                if (!this.spawningStarted) {
+                    ctx.fillText('Merge to start spawning!', 10, canvas.height - 34);
+                }
+            }
+
+            drawGameOver() {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#FFF';
+                ctx.font = '48px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 50);
+                ctx.font = '24px Arial';
+                ctx.fillText(`Final Score: ${this.score}`, canvas.width / 2, canvas.height / 2 + 20);
+                ctx.fillText('Click to Restart', canvas.width / 2, canvas.height / 2 + 70);
+            }
+
+            reset() {
+                this.board = Array(GRID_SIZE.height).fill().map(() => Array(GRID_SIZE.width).fill(null));
+                this.score = 0;
+                this.gameOver = false;
+                this.selectedItem = null;
+                this.spawningStarted = false;
+                this.spawnTimer = 0;
+                this.initializeBoard();
+            }
+
+            gameLoop(currentTime) {
+                const deltaTime = currentTime - this.lastTime;
+                this.lastTime = currentTime;
+
+                this.update(deltaTime);
+                this.draw();
+
+                requestAnimationFrame(this.gameLoop.bind(this));
+            }
+
+            start() {
+                this.lastTime = performance.now();
+                requestAnimationFrame(this.gameLoop.bind(this));
+            }
+        }
+
+        const game = new Game();
+        game.start();
+    </script>
+</body>
+</html>
